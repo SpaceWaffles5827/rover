@@ -1,95 +1,178 @@
-import Image from "next/image";
-import styles from "./page.module.css";
+"use client";
+import React, { useRef, useEffect } from "react";
+import io from "socket.io-client";
 
-export default function Home() {
+const Room = () => {
+  const userVideo = useRef();
+  const partnerVideo = useRef();
+  const peerRef = useRef();
+  const socketRef = useRef();
+  const otherUser = useRef();
+  const userStream = useRef();
+  const senders = useRef([]);
+
+  useEffect(() => {
+    navigator.mediaDevices
+      .getUserMedia({ audio: true, video: true })
+      .then((stream) => {
+        userVideo.current.srcObject = stream;
+        userStream.current = stream;
+
+        socketRef.current = io.connect("http://localhost:8000");
+        socketRef.current.emit("join room", "123");
+
+        socketRef.current.on("other user", (userID: string) => {
+          callUser(userID);
+          otherUser.current = userID;
+        });
+
+        socketRef.current.on("user joined", (userID: string) => {
+          otherUser.current = userID;
+        });
+
+        socketRef.current.on("offer", handleRecieveCall);
+
+        socketRef.current.on("answer", handleAnswer);
+
+        socketRef.current.on("ice-candidate", handleNewICECandidateMsg);
+      });
+  }, []);
+
+  function callUser(userID) {
+    peerRef.current = createPeer(userID);
+    userStream.current
+      .getTracks()
+      .forEach((track) =>
+        senders.current.push(
+          peerRef.current.addTrack(track, userStream.current)
+        )
+      );
+  }
+
+  function createPeer(userID: string) {
+    const peer = new RTCPeerConnection({
+      iceServers: [
+        {
+          urls: "stun:stun.stunprotocol.org",
+        },
+        {
+          urls: "turn:numb.viagenie.ca",
+          credential: "muazkh",
+          username: "webrtc@live.com",
+        },
+      ],
+    });
+
+    peer.onicecandidate = handleICECandidateEvent;
+    peer.ontrack = handleTrackEvent;
+    peer.onnegotiationneeded = () => handleNegotiationNeededEvent(userID);
+
+    return peer;
+  }
+
+  function handleNegotiationNeededEvent(userID: string) {
+    peerRef.current
+      .createOffer()
+      .then((offer) => {
+        return peerRef.current.setLocalDescription(offer);
+      })
+      .then(() => {
+        const payload = {
+          target: userID,
+          caller: socketRef.current.id,
+          sdp: peerRef.current.localDescription,
+        };
+        socketRef.current.emit("offer", payload);
+      })
+      .catch((e) => console.log(e));
+  }
+
+  function handleRecieveCall(incoming) {
+    peerRef.current = createPeer();
+    const desc = new RTCSessionDescription(incoming.sdp);
+    peerRef.current
+      .setRemoteDescription(desc)
+      .then(() => {
+        userStream.current
+          .getTracks()
+          .forEach((track) =>
+            peerRef.current.addTrack(track, userStream.current)
+          );
+      })
+      .then(() => {
+        return peerRef.current.createAnswer();
+      })
+      .then((answer) => {
+        return peerRef.current.setLocalDescription(answer);
+      })
+      .then(() => {
+        const payload = {
+          target: incoming.caller,
+          caller: socketRef.current.id,
+          sdp: peerRef.current.localDescription,
+        };
+        socketRef.current.emit("answer", payload);
+      });
+  }
+
+  function handleAnswer(message) {
+    const desc = new RTCSessionDescription(message.sdp);
+    peerRef.current.setRemoteDescription(desc).catch((e) => console.log(e));
+  }
+
+  function handleICECandidateEvent(e) {
+    if (e.candidate) {
+      const payload = {
+        target: otherUser.current,
+        candidate: e.candidate,
+      };
+      socketRef.current.emit("ice-candidate", payload);
+    }
+  }
+
+  function handleNewICECandidateMsg(incoming) {
+    const candidate = new RTCIceCandidate(incoming);
+
+    peerRef.current.addIceCandidate(candidate).catch((e) => console.log(e));
+  }
+
+  function handleTrackEvent(e) {
+    partnerVideo.current.srcObject = e.streams[0];
+  }
+
+  function shareScreen() {
+    navigator.mediaDevices.getDisplayMedia({ cursor: true }).then((stream) => {
+      const screenTrack = stream.getTracks()[0];
+      senders.current
+        .find((sender) => sender.track.kind === "video")
+        .replaceTrack(screenTrack);
+      screenTrack.onended = function () {
+        senders.current
+          .find((sender) => sender.track.kind === "video")
+          .replaceTrack(userStream.current.getTracks()[1]);
+      };
+    });
+  }
+
   return (
-    <main className={styles.main}>
-      <div className={styles.description}>
-        <p>
-          Get started by editing&nbsp;
-          <code className={styles.code}>src/app/page.tsx</code>
-        </p>
-        <div>
-          <a
-            href="https://vercel.com?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            By{" "}
-            <Image
-              src="/vercel.svg"
-              alt="Vercel Logo"
-              className={styles.vercelLogo}
-              width={100}
-              height={24}
-              priority
-            />
-          </a>
-        </div>
-      </div>
-
-      <div className={styles.center}>
-        <Image
-          className={styles.logo}
-          src="/next.svg"
-          alt="Next.js Logo"
-          width={180}
-          height={37}
-          priority
-        />
-      </div>
-
-      <div className={styles.grid}>
-        <a
-          href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className={styles.card}
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2>
-            Docs <span>-&gt;</span>
-          </h2>
-          <p>Find in-depth information about Next.js features and API.</p>
-        </a>
-
-        <a
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className={styles.card}
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2>
-            Learn <span>-&gt;</span>
-          </h2>
-          <p>Learn about Next.js in an interactive course with&nbsp;quizzes!</p>
-        </a>
-
-        <a
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className={styles.card}
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2>
-            Templates <span>-&gt;</span>
-          </h2>
-          <p>Explore starter templates for Next.js.</p>
-        </a>
-
-        <a
-          href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className={styles.card}
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2>
-            Deploy <span>-&gt;</span>
-          </h2>
-          <p>
-            Instantly deploy your Next.js site to a shareable URL with Vercel.
-          </p>
-        </a>
-      </div>
-    </main>
+    <div>
+      <video
+        controls
+        style={{ height: 500, width: 500 }}
+        autoPlay
+        muted
+        ref={userVideo}
+      />
+      <video
+        controls
+        style={{ height: 500, width: 500 }}
+        autoPlay
+        muted
+        ref={partnerVideo}
+      />
+      <button onClick={shareScreen}>Share screen</button>
+    </div>
   );
-}
+};
+
+export default Room;
