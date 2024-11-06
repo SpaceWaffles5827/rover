@@ -41,6 +41,7 @@ io.on("connection", (socket) => {
   });
 
   socket.on("answer", (payload) => {
+    console.log("answer");
     io.to(payload.target).emit("answer", payload);
   });
 
